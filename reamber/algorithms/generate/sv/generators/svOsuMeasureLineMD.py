@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import pandas as pd
 import numpy as np
 
+from copy import deepcopy
+
 import logging
 
 log = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ class SvOsuMeasureLineEvent:
                 / (self.endY - self.startY)
 
         frame[0,:] = offsets_
+        # print(frame)
 
         return pd.DataFrame(frame.transpose(), columns=['offset', *[f"F{i}" for i in range(len(self.funcs))]])
 
@@ -49,10 +52,12 @@ def svOsuMeasureLineMD(events: List[SvOsuMeasureLineEvent],
                        endBpm: float,
                        scalingFactor: float = 1.175,
                        paddingSize: int = 10,
-                       gapBpm: float = 1e-05,
+                       gapBpm: float = 1e06,
                        stopBpm: float = 1e-05,
-                       fillBpm: float or None = 1e07,
-                       ) -> Tuple[List[OsuSv], List[OsuBpm]]:
+                       fillBpm: float or None = 1e06,
+                       minimum: float = MIN_SV,
+                       maximum: float = MAX_SV,
+                       **kwargs) -> Tuple[List[OsuSv], List[OsuBpm]]:
     """ Generates Measure Line movement for osu! maps. Version 3. Inspired by datoujia
 
     This algorithm is largely similar to Algo B, but I added a collapsing feature.
@@ -75,7 +80,16 @@ def svOsuMeasureLineMD(events: List[SvOsuMeasureLineEvent],
     :param gapBpm: If there's a section where there are no svs to generate, use this bpm to fill.
     :param stopBpm: The bpm value for stop Bpms. Cannot be 0.
     :param fillBpm: The bpm to use to fill such that the sequence ends on lastOffset. None for no fill.
+    :param minimum: Minimum SV allowed. None or < MIN_SV will default to osu!'s minimum
+    :param maximum: Maximum SV allowed. None will default to osu!'s maximum
+    :param kwargs: Keyword arguments for Timing Point generation metadata. This can include metronome, however, some\
+        will override this.
     """
+
+    # We create another copy of kwargs guaranteed to not have metronome
+    kwargs_ = deepcopy(kwargs)
+    if "metronome" in kwargs_.keys():
+        kwargs_.pop("metronome")
 
     offsets = np.arange(firstOffset, lastOffset - paddingSize, 3 + paddingSize)
 
@@ -107,18 +121,19 @@ def svOsuMeasureLineMD(events: List[SvOsuMeasureLineEvent],
     svs = []
     bpms = []
 
+    # Pre-process the minimum, cannot be smaller than MIN_SV
+    minimum = max(MIN_SV, minimum)
     gapFilled = False
 
     for offset, val in zip(offsets, vals):
         val: list
 
-        size = len(val)
         # The gap filling acts like a switch, if the gap is filled previously, it will not fill again until
         # len(val) is not 1. Where gapFilled will be False again.
-        if size == 1:
+        if len(val) == 1:
             log.debug(f"Empty Timestamp {offset:.2f}")
             if not gapFilled:
-                bpms.append(OsuBpm(offset=offset, bpm=gapBpm))
+                bpms.append(OsuBpm(offset=offset, bpm=gapBpm, **kwargs))
                 log.debug(f"Adding Gap Bpm on {offset:.2f}")
                 gapFilled = True
             continue
@@ -129,35 +144,39 @@ def svOsuMeasureLineMD(events: List[SvOsuMeasureLineEvent],
 
         log.debug(f"Before Diff Processing: {diff}")
         for d in range(len(diff)):
-            if diff[d] < MIN_SV:
+            if diff[d] < minimum:
+                # If it's smaller than specified, we have to push the delta to the next diff
                 if d != len(diff) - 1:
                     diff[d + 1] += diff[d]
                 diff[d] = -1
+            elif diff[d] > maximum:
+                # If it's larger than specified, we just ignore it since it doesn't affect anything
+                diff[d] = -1
 
-        diff = diff[diff != -1]
-        diff = np.asarray(sorted(diff, key=lambda y: y == MAX_SV))
+        diff = np.asarray(diff[diff != -1])
         log.debug(f"After Diff Processing: {diff}")
 
-        depBpm = 60000 * len(val)
+        size = len(diff) + 1
+        depBpm = 60000 * size
 
         log.debug(f"Adding Stop Bpm at: {offset:.2f}")
         log.debug(f"Adding Dep. Bpm {depBpm:.2f} at: {offset + paddingSize + 1:.2f}")
 
-        bpms.append(OsuBpm(offset=offset, bpm=stopBpm, metronome=999))
-        bpms.append(OsuBpm(offset=offset + paddingSize + 1, bpm=depBpm, metronome=1))
+        bpms.append(OsuBpm(offset=offset, bpm=stopBpm, metronome=999, **kwargs_))
+        bpms.append(OsuBpm(offset=offset + paddingSize + 1, bpm=depBpm, metronome=1, **kwargs_))
         for i, d in enumerate([*diff, MAX_SV]):
             log.debug(f"Adding Segment {d:.2f} at: {offset + paddingSize + 1 + i / size:.2f}")
 
-            svs.append(OsuSv(offset=offset + paddingSize + 1 + i / size, multiplier=d))
+            svs.append(OsuSv(offset=offset + paddingSize + 1 + i / size, multiplier=d, **kwargs_))
 
     fillFrom = max(offsets + paddingSize + 2)
 
     for offset in range(int(fillFrom), int(lastOffset)):
         log.debug(f"Adding Fill Bpm at: {offset:.2f}")
-        bpms.append(OsuBpm(offset=offset, bpm=fillBpm, metronome=999))
+        bpms.append(OsuBpm(offset=offset, bpm=fillBpm, metronome=999, **kwargs_))
 
     log.debug(f"Adding End Bpm at: {lastOffset:.2f}")
-    bpms.append(OsuBpm(offset=lastOffset, bpm=endBpm))
+    bpms.append(OsuBpm(offset=lastOffset, bpm=endBpm, **kwargs))
 
     return svs, bpms
 
