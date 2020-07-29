@@ -179,13 +179,3 @@ def svOsuMeasureLineMD(events: List[SvOsuMeasureLineEvent],
     bpms.append(OsuBpm(offset=lastOffset, bpm=endBpm, **kwargs))
 
     return svs, bpms
-
-    # if fillBpm is not None:
-    #     bpmList.extend([
-    #         OsuBpm(lastOffset, endBpm),
-    #         *[OsuBpm(x, fillBpm) for x in range(int(firstOffset + (3 + paddingSize) * repeats),
-    #                                             int(lastOffset))]])
-    # else:
-    #     bpmList.append(OsuBpm(int(firstOffset + (3 + paddingSize) * repeats), endBpm))
-    #
-    # return sorted(svList), sorted(bpmList)
