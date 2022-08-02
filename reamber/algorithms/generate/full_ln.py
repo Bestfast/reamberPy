@@ -10,8 +10,8 @@ MapType = TypeVar('MapType', bound=Map)
 
 
 def full_ln(m: MapType,
-            gap: float = 150,
-            ln_as_hit_thres: float = 100) -> MapType:
+            gap: float = 0,
+            ln_as_hit_thres: float = 0) -> MapType:
     """ Makes map Full LN
 
     Args:
@@ -32,6 +32,10 @@ def full_ln(m: MapType,
         dfg['diff'] = dfg['offset'].diff().shift(-1)
 
         for offset, column, length, diff in dfg.itertuples(index=False):
+            if gap == 0:
+                gap = 60000 / m.bpms.current_bpm(offset).bpm / 4
+            if ln_as_hit_thres == 0:
+                ln_as_hit_thres = 60000 / m.bpms.current_bpm(offset).bpm / 8
             inv_length = diff - gap
             if np.isnan(diff):
                 if np.isnan(length):
